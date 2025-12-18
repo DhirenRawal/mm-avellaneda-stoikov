@@ -8,16 +8,19 @@ Responsibilities:
   * Cancel existing quotes.
   * Ask the strategy for new bid/ask prices.
   * Submit limit orders via the OrderBook.
-  * Update P&L from any trades that happen immediately.
+  * Update P&L from trades (immediate fills) and attribute PnL into:
+      - spread PnL
+      - inventory PnL
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict
 
 from .lob import OrderBook, Side, Trade
 from .avellaneda import AvellanedaStoikovStrategy
+from .pnl import PnLState
 
 
 @dataclass
@@ -46,9 +49,7 @@ class ExecutionEngine:
       * manages current bid/ask orders (their IDs)
       * updates cash and inventory based on trades
       * calls the A–S strategy to compute new quotes
-
-    For now, we only handle immediate trades when we submit our limit orders
-    (taker behavior). Later we can extend this to track passive fills too.
+      * tracks spread vs inventory PnL
     """
 
     def __init__(self, book: OrderBook, strategy: AvellanedaStoikovStrategy):
@@ -60,6 +61,10 @@ class ExecutionEngine:
         # current resting orders (if any)
         self.bid_order_id: Optional[int] = None
         self.ask_order_id: Optional[int] = None
+
+        # PnL tracking
+        self.pnl_state = PnLState()
+        self.last_mid: Optional[float] = None
 
     # -------- internal helpers --------
 
@@ -97,25 +102,33 @@ class ExecutionEngine:
         Called once per simulation step.
 
         Steps:
-          1) Cancel existing quotes.
-          2) Ask strategy for new bid/ask prices and sizes.
-          3) Submit limit BUY and SELL via process_limit_order().
-          4) Update cash/inventory from any immediate trades.
-          5) Store resting order IDs (if any).
+          1) Remember inventory at start of step (for inventory PnL).
+          2) Cancel existing quotes.
+          3) Ask strategy for new bid/ask prices and sizes.
+          4) Submit limit BUY and SELL via process_limit_order().
+          5) Update cash/inventory from any immediate trades.
+          6) Compute spread + inventory PnL for this step.
+          7) Store resting order IDs (if any).
 
-        Returns a dict with current quotes (for logging/printing).
+        Returns a dict with:
+          bid, ask, bid_qty, ask_qty,
+          spread_pnl_step, inv_pnl_step,
+          spread_pnl_cum, inv_pnl_cum
         """
-        # 1) Cancel old quotes
+        inventory_prev = self.state.inventory
+        mid_prev = self.last_mid
+
+        # 2) Cancel old quotes
         self._cancel_existing_quotes()
 
-        # 2) Compute new quotes based on current inventory
+        # 3) Compute new quotes based on current inventory
         bid_px, ask_px, bid_qty, ask_qty = self.strategy.compute_quotes(
             S=mid,
             q=self.state.inventory,
             t=t,
         )
 
-        # 3) Submit BUY limit (our bid)
+        # 4) Submit BUY limit (our bid)
         bid_resting, bid_trades = self.book.process_limit_order(
             side=Side.BUY,
             price=bid_px,
@@ -123,12 +136,9 @@ class ExecutionEngine:
             timestamp=t,
         )
         self._apply_trades(bid_trades)
-        if bid_resting is not None:
-            self.bid_order_id = bid_resting.id
-        else:
-            self.bid_order_id = None
+        self.bid_order_id = bid_resting.id if bid_resting is not None else None
 
-        # 4) Submit SELL limit (our ask)
+        # 4b) Submit SELL limit (our ask)
         ask_resting, ask_trades = self.book.process_limit_order(
             side=Side.SELL,
             price=ask_px,
@@ -136,15 +146,26 @@ class ExecutionEngine:
             timestamp=t,
         )
         self._apply_trades(ask_trades)
-        if ask_resting is not None:
-            self.ask_order_id = ask_resting.id
-        else:
-            self.ask_order_id = None
+        self.ask_order_id = ask_resting.id if ask_resting is not None else None
 
-        # 5) Return quotes for logging
+        # 5) PnL attribution for this step
+        all_trades = bid_trades + ask_trades
+        spread_step, inv_step = self.pnl_state.update_for_step(
+            mid_prev=mid_prev,
+            mid_now=mid,
+            inventory_prev=inventory_prev,
+            trades=all_trades,
+        )
+        self.last_mid = mid
+
+        # 6) Return quotes + PnL info for logging
         return {
             "bid": bid_px,
             "ask": ask_px,
             "bid_qty": bid_qty,
             "ask_qty": ask_qty,
+            "spread_pnl_step": spread_step,
+            "inv_pnl_step": inv_step,
+            "spread_pnl_cum": self.pnl_state.cumulative_spread_pnl,
+            "inv_pnl_cum": self.pnl_state.cumulative_inventory_pnl,
         }

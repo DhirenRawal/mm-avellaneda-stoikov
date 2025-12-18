@@ -4,7 +4,8 @@ run_mm_sim.py
 End-to-end demo:
   * SimpleMarketSimulator creates price + background flow
   * Avellaneda–Stoikov strategy computes quotes
-  * ExecutionEngine sends orders and tracks P&L
+  * ExecutionEngine sends orders, tracks cash/inventory,
+    and attributes PnL into spread vs inventory components.
 """
 
 from mm.lob import OrderBook
@@ -45,9 +46,9 @@ def main():
     n_steps = 50
 
     print(
-        "t   mid      bid      ask    inv   cash       equity"
+        "t   mid      bid      ask    inv   equity    spr_step  inv_step  spr_cum   inv_cum"
     )
-    print("-" * 60)
+    print("-" * 95)
 
     for _ in range(n_steps):
         snap = sim.step()
@@ -63,8 +64,11 @@ def main():
             f"{quotes['bid']:7.3f}  "
             f"{quotes['ask']:7.3f}  "
             f"{engine.state.inventory:5.1f}  "
-            f"{engine.state.cash:9.2f}  "
-            f"{equity:9.2f}"
+            f"{equity:9.2f}  "
+            f"{quotes['spread_pnl_step']:8.3f}  "
+            f"{quotes['inv_pnl_step']:8.3f}  "
+            f"{quotes['spread_pnl_cum']:8.3f}  "
+            f"{quotes['inv_pnl_cum']:8.3f}"
         )
 
 
