@@ -8,7 +8,8 @@ It does three things:
   2) Add random background LIMIT orders around the mid price.
   3) Add random background MARKET orders that hit the book.
 
-We will later plug our market-making strategy into this environment.
+Our Day-10 λ(δ) fill model lives in the ExecutionEngine; this simulator
+still just drives S_t and background flow.
 """
 
 from __future__ import annotations

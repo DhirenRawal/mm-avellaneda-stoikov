@@ -4,8 +4,8 @@ run_mm_sim.py
 End-to-end demo:
   * SimpleMarketSimulator creates price + background flow
   * Avellaneda–Stoikov strategy computes quotes
-  * ExecutionEngine sends orders, tracks cash/inventory,
-    and attributes PnL into spread vs inventory components.
+  * ExecutionEngine uses a λ(δ) model to simulate fills,
+    tracks cash/inventory, and attributes PnL into spread vs inventory.
 """
 
 from mm.lob import OrderBook
@@ -33,22 +33,23 @@ def main():
         gamma=0.01,   # risk aversion (smaller = more risk-taking)
         sigma=0.2,    # volatility estimate (roughly match sim sigma)
         k=1.0,        # liquidity sensitivity
-        A=50.0,       # base arrival rate (not used directly yet)
+        A=50.0,       # base arrival rate for λ(δ)
         T=100.0,      # trading horizon in seconds
         dt=sim_cfg.dt,
     )
     strat = AvellanedaStoikovStrategy(as_params, size=1.0)
 
-    # 3) Execution engine
-    engine = ExecutionEngine(book, strat)
+    # 3) Execution engine (pass dt so λ * dt is correct)
+    engine = ExecutionEngine(book, strat, dt=sim_cfg.dt, trade_size=1.0)
 
     # 4) Run simulation
     n_steps = 50
 
     print(
-        "t   mid      bid      ask    inv   equity    spr_step  inv_step  spr_cum   inv_cum"
+        "t   mid      bid      ask    inv   equity    spr_step  inv_step  spr_cum   inv_cum  "
+        "fills_bid  fills_ask  avg_spread"
     )
-    print("-" * 95)
+    print("-" * 130)
 
     for _ in range(n_steps):
         snap = sim.step()
@@ -68,7 +69,10 @@ def main():
             f"{quotes['spread_pnl_step']:8.3f}  "
             f"{quotes['inv_pnl_step']:8.3f}  "
             f"{quotes['spread_pnl_cum']:8.3f}  "
-            f"{quotes['inv_pnl_cum']:8.3f}"
+            f"{quotes['inv_pnl_cum']:8.3f}  "
+            f"{quotes['fills_bid']:9.1f}  "
+            f"{quotes['fills_ask']:9.1f}  "
+            f"{quotes['avg_trade_spread']:10.4f}"
         )
 
 
